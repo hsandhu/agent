@@ -1,32 +1,45 @@
-//
-//  AgentApp.swift
-//  Agent
-//
-//  Created by Harminder Sandhu on 2026-07-31.
-//
-
 import SwiftUI
 import SwiftData
 
 @main
 struct AgentApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+  @StateObject private var stt = SttEngine()
+  @StateObject private var tts = TtsEngine()
+  @StateObject private var voices = VoiceProfileStore()
+  @Environment(\.scenePhase) private var scenePhase
 
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+  private let container: ModelContainer
 
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
+  init() {
+    container = try! ModelContainer(for: AgentJob.self)
+    // BGTaskScheduler requires registration before launch completes.
+    AgentRunner.shared.configure(container: container)
+  }
+
+  var body: some Scene {
+    WindowGroup {
+      ContentView()
+        .environmentObject(stt)
+        .environmentObject(tts)
+        .environmentObject(voices)
+        .task {
+          // The ZipVoice model is ~250 MB of ONNX graphs; start warming it
+          // up as soon as the app launches so playback is ready sooner.
+          tts.loadIfNeeded()
         }
-        .modelContainer(sharedModelContainer)
     }
+    .modelContainer(container)
+    .onChange(of: scenePhase) { _, phase in
+      switch phase {
+      case .active:
+        // Queued agents run immediately while the app is open.
+        AgentRunner.shared.runQueuedJobsSoon()
+      case .background:
+        // And get a background slot for anything still pending.
+        AgentRunner.shared.scheduleBackgroundRun()
+      default:
+        break
+      }
+    }
+  }
 }

@@ -1,0 +1,8 @@
+.DS_Store
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+
+# Prebuilt frameworks and ONNX models — re-fetch with scripts/fetch-deps.sh
+vendor/

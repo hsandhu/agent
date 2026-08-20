@@ -1,0 +1,44 @@
+name: Agent
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  Agent:
+    type: application
+    platform: iOS
+    sources:
+      - path: Agent
+      - path: vendor/models
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - framework: vendor/build-ios/sherpa-onnx.xcframework
+        embed: false
+      - framework: vendor/build-ios/ios-onnxruntime/1.17.1/onnxruntime.xcframework
+        embed: false
+    info:
+      path: Agent/Support/Info.plist
+      properties:
+        CFBundleDisplayName: Agent
+        NSMicrophoneUsageDescription: >-
+          Agent uses the microphone to transcribe your speech on-device and to
+          record the short sample used to synthesize speech in your voice.
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIBackgroundModes:
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.robsandhu.Agent.agentwork
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.robsandhu.Agent
+        SWIFT_VERSION: "5.9"
+        SWIFT_OBJC_BRIDGING_HEADER: Agent/Support/SherpaOnnx-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers"
+        OTHER_LDFLAGS:
+          - "-lc++"
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
