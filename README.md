@@ -25,6 +25,13 @@ re-synthesized on the receiver's device in the sender's cloned voice. The
 networking layer isn't built yet; the *Live Transcription* screen's Echo
 toggle is a local loopback of that pipeline.
 
+<p align="center">
+  <img src="docs/screenshots/agents.png" alt="Agent queue with running and completed jobs" width="24%">
+  <img src="docs/screenshots/research-progress.png" alt="Live progress from an on-device research agent" width="24%">
+  <img src="docs/screenshots/research-result.png" alt="Completed research with a spoken summary and cited findings" width="24%">
+  <img src="docs/screenshots/settings.png" alt="Settings for web research and on-device speech engines" width="24%">
+</p>
+
 ---
 
 ## Architecture
