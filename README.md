@@ -1,3 +1,4 @@
+
 # Agent
 
 An iOS app that runs **AI agents and a complete voice pipeline entirely on the
@@ -5,6 +6,11 @@ device**. No account, no model API, no inference in the cloud. The one thing
 that leaves the phone is web research — the agent searches and downloads pages
 so the on-device model has something current to reason over, and that switch
 can be turned off.
+
+<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-08-20 at 16 27 37" src="https://github.com/user-attachments/assets/8aa34382-f268-4aea-a47d-91a4f2bb0ea1" />
+<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-08-20 at 16 27 31" src="https://github.com/user-attachments/assets/be73113e-e4ca-4591-b9c8-8d609f67641f" />
+<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-08-20 at 16 27 13" src="https://github.com/user-attachments/assets/776cfe93-ac4d-45dd-b1b6-099bc408fbdc" />
+<img width="1206" height="2622" alt="Simulator Screenshot - iPhone 17 Pro - 2026-08-20 at 16 27 00" src="https://github.com/user-attachments/assets/4951d484-9507-49ac-81cd-cd68c044e591" />
 
 Two halves that reinforce each other:
 
