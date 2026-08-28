@@ -18,8 +18,14 @@ final class AgentRunner: ObservableObject {
   @Published private(set) var isWorking = false
   @Published private(set) var lastScheduleNote: String?
 
+  /// How often the foreground app re-checks whether a repeating agent has
+  /// come due. The floor between runs is a day, so being a few minutes late
+  /// costs nothing and this stays out of the way.
+  private static let dueCheckInterval: Duration = .seconds(300)
+
   private var store: AgentStore?
   private var foregroundTask: Task<Void, Never>?
+  private var dueWatcher: Task<Void, Never>?
 
   private init() {}
 
@@ -48,6 +54,7 @@ final class AgentRunner: ObservableObject {
 
   /// Runs all queued jobs now, in-process. Safe to call repeatedly.
   func runQueuedJobsSoon() {
+    startDueWatcher()
     guard foregroundTask == nil else { return }
     DispatchQueue.main.async { self.isWorking = true }
     foregroundTask = Task { [weak self] in
@@ -60,18 +67,60 @@ final class AgentRunner: ObservableObject {
     }
   }
 
+  // MARK: - Repeating agents while the app is open
+
+  /// Repeating agents can come due with the app already in the foreground,
+  /// where no background slot is coming to notice it.
+  private func startDueWatcher() {
+    guard dueWatcher == nil, let store else { return }
+    dueWatcher = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: Self.dueCheckInterval)
+        guard !Task.isCancelled, let self else { return }
+        let requeued = (try? await store.requeueDueRepeatingJobs()) ?? 0
+        if requeued > 0 { self.runQueuedJobsSoon() }
+      }
+    }
+  }
+
+  private func stopDueWatcher() {
+    dueWatcher?.cancel()
+    dueWatcher = nil
+  }
+
   // MARK: - Background scheduling
 
   /// Ask the system for a background slot. Call when the app backgrounds.
   func scheduleBackgroundRun() {
+    stopDueWatcher()
+    guard let store else { return submit(earliestBeginDate: nil) }
+    Task { [weak self] in
+      let queued = (try? await store.queuedJobIDs()) ?? []
+      let nextScheduled = (try? await store.nextScheduledRunDate()) ?? nil
+      guard !queued.isEmpty || nextScheduled != nil else {
+        self?.note("Nothing pending — no background run needed.")
+        return
+      }
+      // Work already queued should run at the first opportunity; a repeating
+      // agent shouldn't wake the device before its slot.
+      self?.submit(earliestBeginDate: queued.isEmpty ? nextScheduled : nil)
+    }
+  }
+
+  private func submit(earliestBeginDate: Date?) {
     let request = BGProcessingTaskRequest(identifier: Self.taskIdentifier)
     // Agents that search the web need connectivity before iOS bothers
     // waking us; a purely on-device run doesn't.
     request.requiresNetworkConnectivity = WebSearchConfig.current.isUsable
     request.requiresExternalPower = false
+    request.earliestBeginDate = earliestBeginDate
     do {
       try BGTaskScheduler.shared.submit(request)
-      note("Background run scheduled.")
+      if let earliestBeginDate {
+        note("Next run scheduled \(earliestBeginDate.formatted(.relative(presentation: .named))).")
+      } else {
+        note("Background run scheduled.")
+      }
     } catch {
       // Expected on the simulator (BGTaskScheduler is unavailable there).
       note("Background scheduling unavailable: \(error.localizedDescription)")
@@ -96,6 +145,8 @@ final class AgentRunner: ObservableObject {
 
   private func drainQueue() async {
     guard let store else { return }
+    // Repeating agents whose slot has arrived join this pass.
+    _ = try? await store.requeueDueRepeatingJobs()
     let brain = AgentBrains.best()
     // Preferences are read once per drain, so a job can't half-run with web
     // research toggled mid-flight.

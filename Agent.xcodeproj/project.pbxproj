@@ -55,7 +55,7 @@
 		477FFBAD9615AF01DEE948E6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4A3EDF915AFFE6D878200289 /* SpeakView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakView.swift; sourceTree = "<group>"; };
 		53C1A7EDBB231E7734A6226D /* onnxruntime.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = onnxruntime.xcframework; path = "vendor/build-ios/ios-onnxruntime/1.17.1/onnxruntime.xcframework"; sourceTree = "<group>"; };
-		5601599622430E52275080A1 /* Agent.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Agent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5601599622430E52275080A1 /* Agent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Agent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5FD90DEB6E8373B4740231E5 /* TtsEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TtsEngine.swift; sourceTree = "<group>"; };
 		61918CF66D930880AAE17D1A /* AgentJob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentJob.swift; sourceTree = "<group>"; };
 		650176E08C0982900F99D56F /* models */ = {isa = PBXFileReference; lastKnownFileType = folder; name = models; path = vendor/models; sourceTree = SOURCE_ROOT; };
@@ -313,22 +313,19 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 3TUBG9U89B;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"vendor/build-ios\"",
 					"\"vendor/build-ios/ios-onnxruntime/1.17.1\"",
 				);
-				HEADER_SEARCH_PATHS = (
-					"$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers",
-				);
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers";
 				INFOPLIST_FILE = Agent/Support/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
-					"-lc++",
-				);
+				OTHER_LDFLAGS = "-lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.robsandhu.Agent;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Agent/Support/SherpaOnnx-Bridging-Header.h";
@@ -343,22 +340,19 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 3TUBG9U89B;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"vendor/build-ios\"",
 					"\"vendor/build-ios/ios-onnxruntime/1.17.1\"",
 				);
-				HEADER_SEARCH_PATHS = (
-					"$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers",
-				);
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers";
 				INFOPLIST_FILE = Agent/Support/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
-					"-lc++",
-				);
+				OTHER_LDFLAGS = "-lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.robsandhu.Agent;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Agent/Support/SherpaOnnx-Bridging-Header.h";

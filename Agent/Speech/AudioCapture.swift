@@ -29,7 +29,7 @@ final class AudioCapture {
   func start() throws {
     guard !isRunning else { return }
 
-    try AudioSession.activate()
+    try AudioSession.beginRecording()
 
     let input = engine.inputNode
     let inputFormat = input.outputFormat(forBus: 0)
@@ -49,6 +49,7 @@ final class AudioCapture {
     engine.stop()
     converter = nil
     isRunning = false
+    AudioSession.endRecording()
   }
 
   private func handle(_ buffer: AVAudioPCMBuffer) {
@@ -75,12 +76,56 @@ final class AudioCapture {
   }
 }
 
-/// One place to configure the shared audio session for simultaneous
-/// record + playback.
+/// One place to configure the shared audio session.
+///
+/// Capture needs `.playAndRecord`. Playback on its own is happier in
+/// `.playback`: it routes to the speaker at full volume and the session
+/// activates faster, which shows up directly as time-to-first-sound. Anything
+/// capturing holds a claim, so a playback request can never downgrade the
+/// category out from under a live microphone tap (the Echo loopback records
+/// and plays at the same time).
 enum AudioSession {
-  static func activate() throws {
+  private static let lock = NSLock()
+  private static var recorders = 0
+  private static var appliedCategory: AVAudioSession.Category?
+
+  /// Claim the session for capture. Balance every call with `endRecording()`.
+  static func beginRecording() throws {
+    lock.lock()
+    recorders += 1
+    lock.unlock()
+    try apply(.playAndRecord)
+  }
+
+  static func endRecording() {
+    lock.lock()
+    recorders = max(0, recorders - 1)
+    lock.unlock()
+  }
+
+  /// Bring the session up for output, keeping `.playAndRecord` for as long as
+  /// anything is capturing.
+  static func activateForPlayback() throws {
+    lock.lock()
+    let recording = recorders > 0
+    lock.unlock()
+    try apply(recording ? .playAndRecord : .playback)
+  }
+
+  private static func apply(_ category: AVAudioSession.Category) throws {
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+    lock.lock()
+    let needsCategory = appliedCategory != category
+    lock.unlock()
+
+    if needsCategory {
+      try session.setCategory(
+        category, mode: .default,
+        options: category == .playAndRecord ? [.defaultToSpeaker] : [])
+      lock.lock()
+      appliedCategory = category
+      lock.unlock()
+    }
     try session.setActive(true)
   }
 }
