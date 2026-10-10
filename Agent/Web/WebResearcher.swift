@@ -11,6 +11,24 @@ struct ResearchContext: Sendable {
 
   static let empty = ResearchContext(queries: [], sources: [], notes: [])
 
+  /// Folds a later round's research into this one. Citation numbers stay
+  /// stable for sources already cited in a draft, and a page read twice
+  /// across rounds is kept once — a duplicate would only eat context budget.
+  func merging(_ other: ResearchContext) -> ResearchContext {
+    var seen = Set(sources.map(\.urlString))
+    var combined = sources
+    for source in other.sources where seen.insert(source.urlString).inserted {
+      combined.append(
+        WebSource(
+          index: combined.count + 1,
+          title: source.title,
+          urlString: source.urlString,
+          excerpt: source.excerpt))
+    }
+    return ResearchContext(
+      queries: queries + other.queries, sources: combined, notes: notes + other.notes)
+  }
+
   /// The sources formatted for prompt stuffing, numbered so the model can
   /// cite them as [1], [2], … `charsPerSource` is the knob that keeps the
   /// block inside a small on-device context window.

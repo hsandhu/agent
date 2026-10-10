@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 @main
 struct AgentApp: App {
@@ -14,6 +15,9 @@ struct AgentApp: App {
     container = try! ModelContainer(for: AgentJob.self)
     // BGTaskScheduler requires registration before launch completes.
     AgentRunner.shared.configure(container: container)
+    // Must be set before the app finishes launching, or a notification that
+    // arrives while we're frontmost is dropped instead of shown.
+    UNUserNotificationCenter.current().delegate = AgentNotificationPresenter.shared
   }
 
   var body: some Scene {

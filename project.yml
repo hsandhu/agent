@@ -41,4 +41,7 @@ targets:
         OTHER_LDFLAGS:
           - "-lc++"
         CODE_SIGN_STYLE: Automatic
+        # Declared here so regenerating the project doesn't drop the signing
+        # team Xcode had written straight into the generated pbxproj.
+        DEVELOPMENT_TEAM: 3TUBG9U89B
         TARGETED_DEVICE_FAMILY: "1"

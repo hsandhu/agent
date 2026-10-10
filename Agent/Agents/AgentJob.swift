@@ -26,50 +26,6 @@ enum AgentJobStatus: String, Codable, CaseIterable {
   }
 }
 
-/// How often a repeatable agent re-runs itself.
-///
-/// Background execution is opportunistic and every run costs battery, network,
-/// and (for research agents) somebody's rate limit, so a day is the floor —
-/// see `AgentJob.minimumRepeatIntervalHours`.
-enum AgentRepeat: Int, CaseIterable, Identifiable {
-  case never = 0
-  case daily = 24
-  case everyThreeDays = 72
-  case weekly = 168
-
-  var id: Int { rawValue }
-
-  /// Hours between runs, or nil for a one-shot agent.
-  var hours: Int? { self == .never ? nil : rawValue }
-
-  var label: String {
-    switch self {
-    case .never: return "Don't repeat"
-    case .daily: return "Every day"
-    case .everyThreeDays: return "Every 3 days"
-    case .weekly: return "Every week"
-    }
-  }
-
-  /// Compact form for the list row and the detail chip.
-  var shortLabel: String {
-    switch self {
-    case .never: return "Once"
-    case .daily: return "Daily"
-    case .everyThreeDays: return "Every 3d"
-    case .weekly: return "Weekly"
-    }
-  }
-
-  init(hours: Int?) {
-    guard let hours else {
-      self = .never
-      return
-    }
-    self = AgentRepeat(rawValue: hours) ?? .daily
-  }
-}
-
 /// One background AI agent and everything it produced. All metadata lives
 /// on-device in SwiftData; nothing leaves the phone.
 @Model
@@ -93,27 +49,24 @@ final class AgentJob {
   /// store migrates lightweightly from jobs created before web research.
   var sourcesJSON: String?
   var errorMessage: String?
-  /// Hours between runs for a repeating agent; nil means it runs once.
-  /// Optional so the store migrates lightweightly from one-shot-only jobs.
-  var repeatIntervalHours: Int?
-  /// When a repeating agent is next due. Nil while it is queued or running,
-  /// and always nil for a one-shot agent.
-  var nextRunAt: Date?
-  /// How many times this agent has finished, successfully or not.
-  var runCount: Int = 0
+  /// Whether the model judged the request actually satisfied when it stopped.
+  /// Defaults true so agents finished before this check existed aren't
+  /// retroactively marked deficient.
+  var meetsRequest: Bool = true
+  /// Newline-separated shortfalls the reviewer named, when the bar wasn't
+  /// met. Optional so the store migrates lightweightly.
+  var outstandingGaps: String?
+  /// Research-and-write rounds the agent spent before it stopped.
+  var rounds: Int = 1
 
-  init(title: String, prompt: String, repeats: AgentRepeat = .never) {
+  init(title: String, prompt: String) {
     self.id = UUID()
     self.title = title
     self.prompt = prompt
     self.statusRaw = AgentJobStatus.queued.rawValue
     self.createdAt = Date()
     self.progressLog = ""
-    self.repeatIntervalHours = repeats.hours
   }
-
-  /// The shortest repeat we accept. Anything below this is clamped up.
-  static let minimumRepeatIntervalHours = 24
 
   var status: AgentJobStatus {
     get { AgentJobStatus(rawValue: statusRaw) ?? .queued }
@@ -130,45 +83,23 @@ final class AgentJob {
     return (try? JSONDecoder().decode([WebSource].self, from: data)) ?? []
   }
 
-  // MARK: - Repeating
+  // MARK: - Completion
 
-  var repeatSchedule: AgentRepeat { AgentRepeat(hours: repeatIntervalHours) }
-
-  var repeats: Bool { repeatIntervalHours != nil }
-
-  /// Seconds between runs, with the 24-hour floor applied. Nil when one-shot.
-  var repeatInterval: TimeInterval? {
-    guard let repeatIntervalHours else { return nil }
-    return TimeInterval(max(Self.minimumRepeatIntervalHours, repeatIntervalHours) * 3600)
+  /// The shortfalls the reviewer named, in the order it named them.
+  var gaps: [String] {
+    guard let outstandingGaps, !outstandingGaps.isEmpty else { return [] }
+    return outstandingGaps.split(separator: "\n").map(String.init)
   }
 
-  /// Whether the next run is due now.
-  var isDueToRun: Bool {
-    guard let nextRunAt, status == .completed || status == .failed else { return false }
-    return nextRunAt <= Date()
-  }
+  /// A finished agent that stopped short of what was asked. The findings are
+  /// still worth reading — they're just not the whole job.
+  var finishedShort: Bool { status == .completed && !meetsRequest }
 
-  /// Switch the schedule, keeping `nextRunAt` consistent with it.
-  func applyRepeat(_ schedule: AgentRepeat) {
-    repeatIntervalHours = schedule.hours
-    guard let interval = repeatInterval else {
-      nextRunAt = nil
-      return
-    }
-    switch status {
-    case .completed, .failed:
-      // Measure from the last run, but never schedule into the past.
-      nextRunAt = max((completedAt ?? Date()).addingTimeInterval(interval), Date())
-    case .queued, .running:
-      // It is about to run anyway; the next slot is booked when it finishes.
-      nextRunAt = nil
-    }
-  }
-
-  /// Records the end of a run and books the next one when repeating.
-  func finishRun(at date: Date = Date()) {
-    runCount += 1
+  /// Records how a run ended, including the model's verdict on its own work.
+  func finishRun(meetsRequest: Bool, gaps: [String], rounds: Int, at date: Date = Date()) {
     completedAt = date
-    nextRunAt = repeatInterval.map { date.addingTimeInterval($0) }
+    self.meetsRequest = meetsRequest
+    self.outstandingGaps = gaps.isEmpty ? nil : gaps.joined(separator: "\n")
+    self.rounds = max(1, rounds)
   }
 }
