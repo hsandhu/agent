@@ -19,7 +19,8 @@ final class AudioPlayer {
   private var epoch = 0
   private var paused = false
 
-  /// Called on the main queue once everything scheduled has finished playing.
+  /// Called on the main queue once everything scheduled has finished playing,
+  /// or once it becomes certain that it never will.
   var onQueueDrained: (() -> Void)?
 
   init() {
@@ -27,13 +28,7 @@ final class AudioPlayer {
     NotificationCenter.default.addObserver(
       forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
     ) { [weak self] _ in
-      // The route or session category changed under us (headphones, or a
-      // capture claim flipping us to .playAndRecord). Force a reconnect
-      // before the next buffer goes in.
-      guard let self else { return }
-      self.lock.lock()
-      self.connectedSampleRate = nil
-      self.lock.unlock()
+      self?.handleConfigurationChange()
     }
   }
 
@@ -42,17 +37,16 @@ final class AudioPlayer {
   /// spending it while the first chunk is still being synthesized keeps it
   /// off the path between the tap and the first sound.
   func prepare(sampleRate: Int) {
+    guard let format = Self.format(for: Double(sampleRate)) else { return }
     try? AudioSession.activateForPlayback()
-    connect(sampleRate: Double(sampleRate))
+    connect(format)
     startEngineIfNeeded()
   }
 
   func play(samples: [Float], sampleRate: Int) {
     guard !samples.isEmpty else { return }
-    let sr = Double(sampleRate)
     guard
-      let format = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32, sampleRate: sr, channels: 1, interleaved: false),
+      let format = Self.format(for: Double(sampleRate)),
       let buffer = AVAudioPCMBuffer(
         pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))
     else { return }
@@ -63,8 +57,13 @@ final class AudioPlayer {
     }
 
     try? AudioSession.activateForPlayback()
-    connect(sampleRate: sr)
-    startEngineIfNeeded()
+    connect(format)
+    guard startEngineIfNeeded() else {
+      // Nothing will play and no completion handler is coming, so release the
+      // transport instead of leaving it waiting on a drain that cannot arrive.
+      notifyDrained()
+      return
+    }
 
     lock.lock()
     let generation = epoch
@@ -96,7 +95,10 @@ final class AudioPlayer {
     lock.unlock()
     guard wasPaused else { return }
     try? AudioSession.activateForPlayback()
-    startEngineIfNeeded()
+    guard startEngineIfNeeded() else {
+      notifyDrained()
+      return
+    }
     node.play()
   }
 
@@ -114,30 +116,56 @@ final class AudioPlayer {
 
   // MARK: - Private
 
-  private func connect(sampleRate sr: Double) {
-    lock.lock()
-    let needsConnect = connectedSampleRate != sr
-    lock.unlock()
-    guard needsConnect,
-      let format = AVAudioFormat(
-        commonFormat: .pcmFormatFloat32, sampleRate: sr, channels: 1, interleaved: false)
-    else { return }
+  private static func format(for sampleRate: Double) -> AVAudioFormat? {
+    AVAudioFormat(
+      commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)
+  }
 
+  /// The route or session category changed under us — switching between
+  /// `.playback` and `.playAndRecord` is enough to do it — and AVAudioEngine
+  /// stops itself when that happens. Buffers already scheduled are gone and
+  /// their completion handlers will never arrive, so drop the accounting and
+  /// tell the transport; otherwise it waits forever for a drain that cannot
+  /// come. The next `play()` rebuilds the connection and keeps going.
+  private func handleConfigurationChange() {
     lock.lock()
+    let lostAudio = queuedBuffers > 0
     epoch &+= 1
     queuedBuffers = 0
-    connectedSampleRate = sr
+    connectedSampleRate = nil
     lock.unlock()
+
+    if lostAudio { notifyDrained() }
+  }
+
+  private func connect(_ format: AVAudioFormat) {
+    lock.lock()
+    let needsConnect = connectedSampleRate != format.sampleRate
+    if needsConnect {
+      epoch &+= 1
+      queuedBuffers = 0
+      connectedSampleRate = format.sampleRate
+    }
+    lock.unlock()
+    guard needsConnect else { return }
 
     node.stop()
     engine.stop()
     engine.connect(node, to: engine.mainMixerNode, format: format)
   }
 
-  private func startEngineIfNeeded() {
-    guard !engine.isRunning else { return }
+  /// False when the engine could not be started — the session was denied, or
+  /// another app holds the route. Callers must not assume audio will play.
+  @discardableResult
+  private func startEngineIfNeeded() -> Bool {
+    if engine.isRunning { return true }
     engine.prepare()
-    try? engine.start()
+    do {
+      try engine.start()
+      return true
+    } catch {
+      return false
+    }
   }
 
   private func bufferFinished(_ generation: Int) {
@@ -150,7 +178,10 @@ final class AudioPlayer {
     let drained = queuedBuffers == 0
     lock.unlock()
 
-    guard drained else { return }
+    if drained { notifyDrained() }
+  }
+
+  private func notifyDrained() {
     DispatchQueue.main.async { [weak self] in self?.onQueueDrained?() }
   }
 }

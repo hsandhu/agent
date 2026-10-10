@@ -165,11 +165,10 @@ final class TtsEngine: ObservableObject {
       var totalDuration = 0.0
       var firstSoundAt: TimeInterval?
 
-      for (index, chunk) in chunks.enumerated() {
-        guard self.isCurrent(generation) else {
-          self.dropChunks(chunks.count - index, generation: generation)
-          break
-        }
+      // Reaching either `break` means the epoch moved on, and whoever moved
+      // it already reset `pendingChunks` — no accounting to undo here.
+      for chunk in chunks {
+        guard self.isCurrent(generation) else { break }
         let audio = tts.generateZeroShot(
           text: Self.ensureTerminalPunctuation(chunk),
           promptText: profile.transcript,
@@ -178,10 +177,7 @@ final class TtsEngine: ObservableObject {
           speed: self.speed,
           numSteps: self.numSteps
         )
-        guard self.isCurrent(generation) else {
-          self.dropChunks(chunks.count - index, generation: generation)
-          break
-        }
+        guard self.isCurrent(generation) else { break }
         if audio.n > 0 {
           if firstSoundAt == nil { firstSoundAt = Date().timeIntervalSince(started) }
           self.outputSampleRate = Int(audio.sampleRate)
@@ -198,9 +194,12 @@ final class TtsEngine: ObservableObject {
       DispatchQueue.main.async {
         self.isSynthesizing = false
         if let firstSoundAt {
+          // RTF stays in: above 1.0 synthesis can't keep ahead of playback and
+          // the chunks start gapping, which is the number worth tuning against.
           self.lastStats = String(
-            format: "%.1fs of audio in %.1fs · first sound after %.1fs",
-            totalDuration, elapsed, firstSoundAt)
+            format: "%.1fs of audio in %.1fs (RTF %.2f) · first sound after %.1fs",
+            totalDuration, elapsed, totalDuration > 0 ? elapsed / totalDuration : 0,
+            firstSoundAt)
         } else {
           self.lastStats = "Synthesis produced no audio."
         }
@@ -252,6 +251,11 @@ final class TtsEngine: ObservableObject {
   func isPaused(_ id: UUID) -> Bool { playback == .paused(id) }
   func isPreparing(_ id: UUID) -> Bool { playback == .preparing(id) }
 
+  /// Whether `id` owns the transport and is not parked — what a play/pause
+  /// button draws itself from. True from the tap, through synthesis, until the
+  /// audio runs out or the user pauses.
+  func isSounding(_ id: UUID) -> Bool { isActive(id) && !isPaused(id) }
+
   /// Play a raw wav file (used to preview enrollment recordings).
   func playWav(url: URL) {
     queue.async { [weak self] in
@@ -277,8 +281,15 @@ final class TtsEngine: ObservableObject {
     lock.unlock()
   }
 
+  /// Applied immediately when the caller is already on the main thread. A tap
+  /// has to see its own state change before the next tap reads it, or a quick
+  /// second tap finds `.idle` and restarts instead of pausing.
   private func publish(_ state: Playback) {
-    DispatchQueue.main.async { self.playback = state }
+    if Thread.isMainThread {
+      playback = state
+    } else {
+      DispatchQueue.main.async { self.playback = state }
+    }
   }
 
   /// The first audio for `id` is scheduled. A pause the user asked for while

@@ -135,9 +135,7 @@ struct AgentRow: View {
   /// True from the moment the button is tapped — including while the first
   /// chunk is still being synthesized — so it behaves like any other
   /// play/pause control instead of lagging the tap.
-  private var isActive: Bool {
-    tts.isActive(job.id) && !tts.isPaused(job.id)
-  }
+  private var isActive: Bool { tts.isSounding(job.id) }
 
   @ViewBuilder private var statusIndicator: some View {
     switch job.status {
@@ -180,14 +178,15 @@ struct AgentRow: View {
         Text("Failed")
           .foregroundStyle(.red)
       }
-      if job.repeats {
+      // An agent that stopped short says so here rather than passing as Done.
+      if job.finishedShort {
         Text("·")
           .foregroundStyle(.secondary)
-        Image(systemName: "arrow.triangle.2.circlepath")
+        Image(systemName: "exclamationmark.circle")
           .font(.caption2)
-          .foregroundStyle(.secondary)
-        Text(job.repeatSchedule.shortLabel)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.orange)
+        Text("\(job.gaps.count) gap\(job.gaps.count == 1 ? "" : "s")")
+          .foregroundStyle(.orange)
       }
     }
   }
@@ -210,7 +209,6 @@ struct ComposerBar: View {
 
   @State private var draft = ""
   @State private var livePartial = ""
-  @State private var repeatSchedule: AgentRepeat = .never
   @State private var dictating = false
   @State private var startedEngine = false
   @State private var micDenied = false
@@ -229,9 +227,6 @@ struct ComposerBar: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      if repeatSchedule != .never {
-        repeatChip
-      }
       if dictating && !livePartial.isEmpty {
         Text(livePartial)
           .font(.callout)
@@ -243,11 +238,6 @@ struct ComposerBar: View {
 
       HStack(alignment: .bottom, spacing: 10) {
         Menu {
-          Picker("Repeat", selection: $repeatSchedule) {
-            ForEach(AgentRepeat.allCases) { schedule in
-              Text(schedule.label).tag(schedule)
-            }
-          }
           Section("Examples") {
             ForEach(Self.suggestions, id: \.label) { suggestion in
               Button(suggestion.label) { draft = suggestion.prompt }
@@ -301,7 +291,6 @@ struct ComposerBar: View {
       .padding(.bottom, 6)
     }
     .animation(.snappy(duration: 0.2), value: trimmedDraft.isEmpty)
-    .animation(.snappy(duration: 0.2), value: repeatSchedule)
     .animation(.default, value: dictating)
     .alert("Microphone access is required", isPresented: $micDenied) {
       Button("OK", role: .cancel) {}
@@ -309,30 +298,6 @@ struct ComposerBar: View {
       Text("Enable microphone access for Agent in Settings to dictate.")
     }
     .onDisappear { stopDictation() }
-  }
-
-  /// Shown above the pill while a repeat is armed, so spawning on a schedule
-  /// is never a surprise.
-  private var repeatChip: some View {
-    Button {
-      repeatSchedule = .never
-    } label: {
-      HStack(spacing: 5) {
-        Image(systemName: "arrow.triangle.2.circlepath")
-        Text("Repeats \(repeatSchedule.shortLabel.lowercased())")
-        Image(systemName: "xmark")
-          .font(.caption2.weight(.semibold))
-      }
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .padding(.horizontal, 10)
-      .padding(.vertical, 5)
-      .background(Capsule().fill(Color(.systemGray6)))
-    }
-    .buttonStyle(.plain)
-    .padding(.horizontal, 24)
-    .accessibilityLabel("Repeats \(repeatSchedule.label). Tap to turn off.")
-    .transition(.opacity)
   }
 
   private var trimmedDraft: String {
@@ -344,12 +309,14 @@ struct ComposerBar: View {
     guard !text.isEmpty else { return }
     stopDictation()
     focused = false
-    let job = AgentJob(title: Self.title(for: text), prompt: text, repeats: repeatSchedule)
+    let job = AgentJob(title: Self.title(for: text), prompt: text)
     context.insert(job)
     try? context.save()
+    // Asked for here, where the reason is self-evident: the user has just
+    // sent work off to happen without them watching.
+    Task { await AgentNotifier.requestAuthorizationIfNeeded() }
     AgentRunner.shared.runQueuedJobsSoon()
     draft = ""
-    repeatSchedule = .never
   }
 
   /// First few words of the prompt become the agent's name.
@@ -424,8 +391,8 @@ struct AgentDetailView: View {
 
         VStack(alignment: .leading, spacing: 4) {
           Text(statusLine)
-          if let repeatLine {
-            Text(repeatLine)
+          if let roundsLine {
+            Text(roundsLine)
           }
         }
         .font(.footnote)
@@ -461,6 +428,12 @@ struct AgentDetailView: View {
             Text(stats)
               .font(.caption)
               .foregroundStyle(.secondary)
+          }
+
+          // Named before the findings, not buried under them: the honest
+          // reading of a short result depends on knowing what it misses.
+          if job.finishedShort {
+            gapsCallout
           }
 
           sectionHeader(job.status == .completed ? "Summary" : "Previous summary")
@@ -566,42 +539,30 @@ struct AgentDetailView: View {
           .accessibilityLabel("\(job.sources.count) sources")
       }
 
-      repeatChip
+      verdictChip
     }
   }
 
-  /// Changes the schedule in place — an agent can be made repeating (or
-  /// one-shot again) after the fact.
-  private var repeatChip: some View {
-    Menu {
-      Picker("Repeat", selection: repeatBinding) {
-        ForEach(AgentRepeat.allCases) { schedule in
-          Text(schedule.label).tag(schedule)
-        }
-      }
-    } label: {
-      Label(job.repeatSchedule.shortLabel, systemImage: "arrow.triangle.2.circlepath")
+  /// How the agent judged its own work, and what that cost. Only shown once
+  /// it has actually stopped.
+  @ViewBuilder private var verdictChip: some View {
+    if job.status == .completed || job.status == .failed {
+      Label(
+        job.meetsRequest ? "Met in \(job.rounds)" : "Fell short",
+        systemImage: job.meetsRequest ? "checkmark.seal" : "exclamationmark.triangle")
         .font(.caption)
-        .foregroundStyle(job.repeats ? Color.accentColor : .secondary)
+        .foregroundStyle(job.meetsRequest ? Color.green : .orange)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(Capsule().fill(Color(.systemGray6)))
+        .accessibilityLabel(
+          job.meetsRequest
+            ? "Request met after \(job.rounds) round\(job.rounds == 1 ? "" : "s")"
+            : "Finished short of the request")
     }
-    .accessibilityLabel("Repeat: \(job.repeatSchedule.label)")
   }
 
-  private var repeatBinding: Binding<AgentRepeat> {
-    Binding(
-      get: { job.repeatSchedule },
-      set: { schedule in
-        job.applyRepeat(schedule)
-        try? context.save()
-      })
-  }
-
-  private var isSpeaking: Bool {
-    tts.isActive(job.id) && !tts.isPaused(job.id)
-  }
+  private var isSpeaking: Bool { tts.isSounding(job.id) }
 
   private var chipColor: Color {
     switch job.status {
@@ -628,23 +589,42 @@ struct AgentDetailView: View {
     }
   }
 
-  /// Where this agent is in its schedule: how many times it has run, and
-  /// when the next slot is. Background runs are opportunistic, so this is the
-  /// earliest it will run, not a guarantee.
-  private var repeatLine: String? {
-    guard job.repeats else { return nil }
-    var parts: [String] = ["Repeats \(job.repeatSchedule.shortLabel.lowercased())"]
-    if job.runCount > 0 {
-      parts.append("run \(job.runCount) time\(job.runCount == 1 ? "" : "s")")
+  /// The shortfalls the reviewer named. The agent kept working until it ran
+  /// out of rounds or stopped finding anything new, so these are what it
+  /// could not close — not what it never tried.
+  private var gapsCallout: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label("Short of the request", systemImage: "exclamationmark.triangle.fill")
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.orange)
+      ForEach(Array(job.gaps.enumerated()), id: \.offset) { _, gap in
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+          Text("•").foregroundStyle(.orange)
+          Text(gap)
+            .font(.callout)
+            .fixedSize(horizontal: false, vertical: true)
+          Spacer(minLength: 0)
+        }
+      }
+      Text("The findings below are still worth reading — they just aren't the whole job.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
-    if let next = job.nextRunAt {
-      parts.append(
-        next <= Date()
-          ? "due now" : "next \(next.formatted(.relative(presentation: .named)))")
-    } else if job.status == .queued || job.status == .running {
-      parts.append("running now")
-    }
-    return parts.joined(separator: " · ")
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+      RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .fill(Color.orange.opacity(0.10)))
+  }
+
+  /// What the agent did to get here: how many rounds of research and
+  /// rewriting it took before it stopped, and on whose say-so.
+  private var roundsLine: String? {
+    guard job.status == .completed || job.status == .failed, job.rounds > 0 else { return nil }
+    let rounds = "\(job.rounds) round\(job.rounds == 1 ? "" : "s")"
+    return job.meetsRequest
+      ? "\(rounds) · the model judged the request met"
+      : "\(rounds) · stopped short of the request"
   }
 
   private func sectionHeader(_ title: String) -> some View {

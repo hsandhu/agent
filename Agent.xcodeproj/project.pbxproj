@@ -35,6 +35,7 @@
 		E85F163A324A8F1657EAE838 /* SttEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2C8D98090A933C4871C7F8 /* SttEngine.swift */; };
 		E8919694A0B91AE90219B97D /* AgentJob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61918CF66D930880AAE17D1A /* AgentJob.swift */; };
 		E98E5467D98E67009575C99D /* WebSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FB9EE8CEAD6377D91B56BC3 /* WebSearch.swift */; };
+		F46391367A0A5D178C817F6E /* AgentNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A3265AFCA02B34D72B9416 /* AgentNotifier.swift */; };
 		F9BC9C6BEB1750FC7D92B765 /* WebResearcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92E8808749A7D2013864E99 /* WebResearcher.swift */; };
 		FD8211760838FD2A060F02B5 /* TranscribeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCB78E9DACCD6235BB998F6 /* TranscribeView.swift */; };
 		FEA15917FFB2093F1BB1092D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DD8E8E9D5381121275A383F /* SettingsView.swift */; };
@@ -55,7 +56,7 @@
 		477FFBAD9615AF01DEE948E6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4A3EDF915AFFE6D878200289 /* SpeakView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakView.swift; sourceTree = "<group>"; };
 		53C1A7EDBB231E7734A6226D /* onnxruntime.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = onnxruntime.xcframework; path = "vendor/build-ios/ios-onnxruntime/1.17.1/onnxruntime.xcframework"; sourceTree = "<group>"; };
-		5601599622430E52275080A1 /* Agent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Agent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5601599622430E52275080A1 /* Agent.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Agent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5FD90DEB6E8373B4740231E5 /* TtsEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TtsEngine.swift; sourceTree = "<group>"; };
 		61918CF66D930880AAE17D1A /* AgentJob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentJob.swift; sourceTree = "<group>"; };
 		650176E08C0982900F99D56F /* models */ = {isa = PBXFileReference; lastKnownFileType = folder; name = models; path = vendor/models; sourceTree = SOURCE_ROOT; };
@@ -67,6 +68,7 @@
 		89A9B5489A05851554AB1657 /* BraveSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BraveSearch.swift; sourceTree = "<group>"; };
 		8DD8E8E9D5381121275A383F /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		8E40C2072F2344D199F8F7FF /* VoiceProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProfile.swift; sourceTree = "<group>"; };
+		A1A3265AFCA02B34D72B9416 /* AgentNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentNotifier.swift; sourceTree = "<group>"; };
 		AF2C8D98090A933C4871C7F8 /* SttEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SttEngine.swift; sourceTree = "<group>"; };
 		C02B94E2497CDD60B63EE383 /* sherpa-onnx.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "sherpa-onnx.xcframework"; path = "vendor/build-ios/sherpa-onnx.xcframework"; sourceTree = "<group>"; };
 		C044DDD1058659574A8ECE86 /* AgentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStore.swift; sourceTree = "<group>"; };
@@ -95,6 +97,7 @@
 			children = (
 				82269C0E6AFF38B1BD34CCD2 /* AgentBrain.swift */,
 				61918CF66D930880AAE17D1A /* AgentJob.swift */,
+				A1A3265AFCA02B34D72B9416 /* AgentNotifier.swift */,
 				243981226EC21C636247D6B3 /* AgentRunner.swift */,
 				C044DDD1058659574A8ECE86 /* AgentStore.swift */,
 			);
@@ -234,6 +237,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					8A793C1A5D071DAE0EF21067 = {
+						DevelopmentTeam = 3TUBG9U89B;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -277,6 +281,7 @@
 				4C7AE7A1905E6B0C0BAE47ED /* AgentApp.swift in Sources */,
 				99FF58DCBE16323C57564F52 /* AgentBrain.swift in Sources */,
 				E8919694A0B91AE90219B97D /* AgentJob.swift in Sources */,
+				F46391367A0A5D178C817F6E /* AgentNotifier.swift in Sources */,
 				9CDED991A71D4BCFE7DBFAC0 /* AgentRunner.swift in Sources */,
 				C999BA0A0D8640E42624EED0 /* AgentStore.swift in Sources */,
 				7901580495DCC2042F28FD74 /* AgentsView.swift in Sources */,
@@ -319,13 +324,17 @@
 					"\"vendor/build-ios\"",
 					"\"vendor/build-ios/ios-onnxruntime/1.17.1\"",
 				);
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers";
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers",
+				);
 				INFOPLIST_FILE = Agent/Support/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = "-lc++";
+				OTHER_LDFLAGS = (
+					"-lc++",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.robsandhu.Agent;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Agent/Support/SherpaOnnx-Bridging-Header.h";
@@ -346,13 +355,17 @@
 					"\"vendor/build-ios\"",
 					"\"vendor/build-ios/ios-onnxruntime/1.17.1\"",
 				);
-				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers";
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/vendor/build-ios/sherpa-onnx.xcframework/ios-arm64/Headers",
+				);
 				INFOPLIST_FILE = Agent/Support/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = "-lc++";
+				OTHER_LDFLAGS = (
+					"-lc++",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.robsandhu.Agent;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Agent/Support/SherpaOnnx-Bridging-Header.h";

@@ -29,16 +29,15 @@ actor AgentStore {
     try modelContext.save()
   }
 
-  func complete(
-    _ id: UUID, summary: String, detail: String, brain: String, sources: [WebSource]
-  ) throws {
+  func complete(_ id: UUID, result: AgentBrainResult, brain: String) throws {
     guard let job = try job(id) else { return }
     job.status = .completed
-    job.finishRun()
-    job.resultSummary = summary
-    job.resultDetail = detail
+    job.finishRun(
+      meetsRequest: result.meetsRequest, gaps: result.gaps, rounds: result.rounds)
+    job.resultSummary = result.summary
+    job.resultDetail = result.detail
     job.brainUsed = brain
-    job.sourcesJSON = sources.isEmpty ? nil : Self.encode(sources)
+    job.sourcesJSON = result.sources.isEmpty ? nil : Self.encode(result.sources)
     try modelContext.save()
   }
 
@@ -50,9 +49,8 @@ actor AgentStore {
   func fail(_ id: UUID, message: String) throws {
     guard let job = try job(id) else { return }
     job.status = .failed
-    // A failed run still counts against the schedule: a repeating agent
-    // retries on its next slot rather than hammering the same broken query.
-    job.finishRun()
+    // A run that threw never got a verdict, so nothing was verified.
+    job.finishRun(meetsRequest: false, gaps: [], rounds: job.rounds)
     job.errorMessage = message
     try modelContext.save()
   }
@@ -75,36 +73,6 @@ actor AgentStore {
       job.startedAt = nil
     }
     try modelContext.save()
-  }
-
-  // MARK: - Repeating agents
-
-  /// Puts every repeating agent whose next slot has arrived back in the
-  /// queue. The previous result stays on the job until the new run replaces
-  /// it, so the UI never shows a blank while it re-runs.
-  @discardableResult
-  func requeueDueRepeatingJobs() throws -> Int {
-    // `nextRunAt` is only ever set on repeating jobs, so this is the whole
-    // candidate set; the due/status check is cheap enough in memory.
-    let descriptor = FetchDescriptor<AgentJob>(predicate: #Predicate { $0.nextRunAt != nil })
-    let due = try modelContext.fetch(descriptor).filter(\.isDueToRun)
-    guard !due.isEmpty else { return 0 }
-
-    for job in due {
-      job.status = .queued
-      job.startedAt = nil
-      job.errorMessage = nil
-      job.nextRunAt = nil
-      job.progressLog = ""
-    }
-    try modelContext.save()
-    return due.count
-  }
-
-  /// When the earliest repeating agent is next due, if any.
-  func nextScheduledRunDate() throws -> Date? {
-    let descriptor = FetchDescriptor<AgentJob>(predicate: #Predicate { $0.nextRunAt != nil })
-    return try modelContext.fetch(descriptor).compactMap(\.nextRunAt).min()
   }
 
   func titleAndPrompt(_ id: UUID) throws -> (String, String) {

@@ -31,16 +31,26 @@ final class AudioCapture {
 
     try AudioSession.beginRecording()
 
-    let input = engine.inputNode
-    let inputFormat = input.outputFormat(forBus: 0)
-    converter = AVAudioConverter(from: inputFormat, to: outputFormat)
+    // Everything past the claim has to hand it back on the way out, or the
+    // session stays pinned to .playAndRecord for the rest of the process and
+    // playback never gets the faster .playback route again.
+    do {
+      let input = engine.inputNode
+      let inputFormat = input.outputFormat(forBus: 0)
+      converter = AVAudioConverter(from: inputFormat, to: outputFormat)
 
-    input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-      self?.handle(buffer)
+      input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        self?.handle(buffer)
+      }
+      engine.prepare()
+      try engine.start()
+      isRunning = true
+    } catch {
+      engine.inputNode.removeTap(onBus: 0)
+      converter = nil
+      AudioSession.endRecording()
+      throw error
     }
-    engine.prepare()
-    try engine.start()
-    isRunning = true
   }
 
   func stop() {
@@ -112,19 +122,20 @@ enum AudioSession {
     try apply(recording ? .playAndRecord : .playback)
   }
 
+  /// The lock is held across `setCategory` on purpose: reading the cached
+  /// category, changing it, and recording the new one have to be one step, or
+  /// two threads racing capture against playback can leave `appliedCategory`
+  /// disagreeing with the session and short-circuit every later correction.
   private static func apply(_ category: AVAudioSession.Category) throws {
     let session = AVAudioSession.sharedInstance()
     lock.lock()
-    let needsCategory = appliedCategory != category
-    lock.unlock()
+    defer { lock.unlock() }
 
-    if needsCategory {
+    if appliedCategory != category {
       try session.setCategory(
         category, mode: .default,
         options: category == .playAndRecord ? [.defaultToSpeaker] : [])
-      lock.lock()
       appliedCategory = category
-      lock.unlock()
     }
     try session.setActive(true)
   }

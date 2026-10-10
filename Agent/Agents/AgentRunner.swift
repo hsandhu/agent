@@ -18,14 +18,8 @@ final class AgentRunner: ObservableObject {
   @Published private(set) var isWorking = false
   @Published private(set) var lastScheduleNote: String?
 
-  /// How often the foreground app re-checks whether a repeating agent has
-  /// come due. The floor between runs is a day, so being a few minutes late
-  /// costs nothing and this stays out of the way.
-  private static let dueCheckInterval: Duration = .seconds(300)
-
   private var store: AgentStore?
   private var foregroundTask: Task<Void, Never>?
-  private var dueWatcher: Task<Void, Never>?
 
   private init() {}
 
@@ -53,8 +47,10 @@ final class AgentRunner: ObservableObject {
   // MARK: - Foreground execution
 
   /// Runs all queued jobs now, in-process. Safe to call repeatedly.
+  /// Main thread only — it owns `foregroundTask`, which the drain task also
+  /// clears from the main actor.
+  @MainActor
   func runQueuedJobsSoon() {
-    startDueWatcher()
     guard foregroundTask == nil else { return }
     DispatchQueue.main.async { self.isWorking = true }
     foregroundTask = Task { [weak self] in
@@ -67,60 +63,43 @@ final class AgentRunner: ObservableObject {
     }
   }
 
-  // MARK: - Repeating agents while the app is open
-
-  /// Repeating agents can come due with the app already in the foreground,
-  /// where no background slot is coming to notice it.
-  private func startDueWatcher() {
-    guard dueWatcher == nil, let store else { return }
-    dueWatcher = Task { [weak self] in
-      while !Task.isCancelled {
-        try? await Task.sleep(for: Self.dueCheckInterval)
-        guard !Task.isCancelled, let self else { return }
-        let requeued = (try? await store.requeueDueRepeatingJobs()) ?? 0
-        if requeued > 0 { self.runQueuedJobsSoon() }
-      }
-    }
-  }
-
-  private func stopDueWatcher() {
-    dueWatcher?.cancel()
-    dueWatcher = nil
-  }
-
   // MARK: - Background scheduling
 
   /// Ask the system for a background slot. Call when the app backgrounds.
+  ///
+  /// The request goes in synchronously. iOS starts suspending us moments after
+  /// `.background`, and asking the store whether anything is queued needs an
+  /// actor hop — long enough that the process can be frozen before a deferred
+  /// submit ever runs, leaving no request registered at all. So we claim the
+  /// slot first and withdraw it afterwards if there turns out to be no work.
+  @MainActor
   func scheduleBackgroundRun() {
-    stopDueWatcher()
-    guard let store else { return submit(earliestBeginDate: nil) }
+    submit()
+
+    guard let store else { return }
     Task { [weak self] in
       let queued = (try? await store.queuedJobIDs()) ?? []
-      let nextScheduled = (try? await store.nextScheduledRunDate()) ?? nil
-      guard !queued.isEmpty || nextScheduled != nil else {
-        self?.note("Nothing pending — no background run needed.")
-        return
-      }
-      // Work already queued should run at the first opportunity; a repeating
-      // agent shouldn't wake the device before its slot.
-      self?.submit(earliestBeginDate: queued.isEmpty ? nextScheduled : nil)
+      guard let self, queued.isEmpty else { return }
+      await MainActor.run { self.cancelScheduledRun() }
     }
   }
 
-  private func submit(earliestBeginDate: Date?) {
+  /// Withdraw the slot claimed up front once we know there is no work.
+  @MainActor
+  private func cancelScheduledRun() {
+    BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
+    note("Nothing queued — no background run needed.")
+  }
+
+  private func submit() {
     let request = BGProcessingTaskRequest(identifier: Self.taskIdentifier)
     // Agents that search the web need connectivity before iOS bothers
     // waking us; a purely on-device run doesn't.
     request.requiresNetworkConnectivity = WebSearchConfig.current.isUsable
     request.requiresExternalPower = false
-    request.earliestBeginDate = earliestBeginDate
     do {
       try BGTaskScheduler.shared.submit(request)
-      if let earliestBeginDate {
-        note("Next run scheduled \(earliestBeginDate.formatted(.relative(presentation: .named))).")
-      } else {
-        note("Background run scheduled.")
-      }
+      note("Background run scheduled.")
     } catch {
       // Expected on the simulator (BGTaskScheduler is unavailable there).
       note("Background scheduling unavailable: \(error.localizedDescription)")
@@ -128,9 +107,10 @@ final class AgentRunner: ObservableObject {
   }
 
   private func handle(_ task: BGProcessingTask) {
-    // Chain the next slot first so pending work keeps flowing even if this
-    // run is cut short.
-    scheduleBackgroundRun()
+    // Chain the next slot straight away so pending work keeps flowing even if
+    // this run is cut short. The handler runs off the main actor, which owns
+    // the scheduling state.
+    Task { @MainActor in self.scheduleBackgroundRun() }
 
     let work = Task { [weak self] in
       await self?.drainQueue()
@@ -145,8 +125,6 @@ final class AgentRunner: ObservableObject {
 
   private func drainQueue() async {
     guard let store else { return }
-    // Repeating agents whose slot has arrived join this pass.
-    _ = try? await store.requeueDueRepeatingJobs()
     let brain = AgentBrains.best()
     // Preferences are read once per drain, so a job can't half-run with web
     // research toggled mid-flight.
@@ -170,14 +148,19 @@ final class AgentRunner: ObservableObject {
           try? await store.appendProgress(jobID, line: line)
         }
 
-        try await store.complete(
-          jobID, summary: result.summary, detail: result.detail, brain: brain.name,
-          sources: result.sources)
+        try await store.complete(jobID, result: result, brain: brain.name)
+        await AgentNotifier.agentFinished(
+          id: jobID, title: title, summary: result.summary,
+          meetsRequest: result.meetsRequest, gaps: result.gaps.count)
       } catch is CancellationError {
+        // Requeued, not finished — nothing to announce.
         try? await store.requeue(jobID)
         return
       } catch {
         try? await store.fail(jobID, message: error.localizedDescription)
+        await AgentNotifier.agentFailed(
+          id: jobID, title: (try? await store.titleAndPrompt(jobID).0) ?? "Agent",
+          message: error.localizedDescription)
       }
     }
   }

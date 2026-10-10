@@ -7,6 +7,14 @@ struct AgentBrainResult {
   let detail: String
   /// Pages the agent read, in citation order. Empty when it worked offline.
   var sources: [WebSource] = []
+  /// Whether the model judged the request actually satisfied. A brain that
+  /// can't review its own work reports what it produced at face value.
+  var meetsRequest: Bool = true
+  /// What the request asked for that the findings still don't deliver.
+  /// Empty when `meetsRequest` is true.
+  var gaps: [String] = []
+  /// How many research-and-write rounds it took.
+  var rounds: Int = 1
 }
 
 /// The model that does an agent's work. Swappable so Apple Intelligence,
@@ -195,10 +203,15 @@ struct MockAgentBrain: AgentBrain {
   /// Intelligence). Only offered when the device supports it and the user has
   /// Apple Intelligence enabled.
   ///
-  /// With web research on this is a three-pass pipeline: plan search queries,
-  /// hand the retrieved pages back as context for the findings, then write a
-  /// spoken summary. The model never reaches the network itself — the app
-  /// does the fetching and decides what it gets to see.
+  /// With web research on, the model drives a loop rather than a single pass:
+  /// plan search queries, reason over the retrieved pages, then **review its
+  /// own findings against the original request**. A task is finished when the
+  /// reviewer says the request is actually met — not when a pass completes and
+  /// not on a clock. If it falls short, the reviewer names the gaps and the
+  /// searches that would close them, and the loop goes round again.
+  ///
+  /// The model never reaches the network itself — the app does the fetching
+  /// and decides what it gets to see.
   @available(iOS 26.0, *)
   struct FoundationModelsBrain: AgentBrain {
     let name = "Apple Intelligence (on-device)"
@@ -207,6 +220,20 @@ struct MockAgentBrain: AgentBrain {
     /// context window, so an over-long source block is a real failure mode;
     /// on overflow we retry with tighter excerpts before giving up on them.
     private static let excerptBudgets = [1100, 600, 300]
+
+    /// Ceiling on research-and-write rounds for one task. A reviewer held to
+    /// a high bar can almost always find something else to want, and each
+    /// round costs searches, page reads, and on-device inference — so the
+    /// loop stops and reports honestly rather than chasing perfection.
+    private static let maxRounds = 3
+
+    /// The model has no clock. Left unaided it anchors time-sensitive queries
+    /// to whatever year its training suggests — a run observed writing
+    /// "registration deadlines 2024" two years late — so every prompt that
+    /// writes searches is told the date.
+    private static var todayLine: String {
+      "Today is \(Date().formatted(.dateTime.weekday(.wide).month(.wide).day().year()))."
+    }
 
     static var isAvailable: Bool {
       if case .available = SystemLanguageModel.default.availability {
@@ -228,7 +255,39 @@ struct MockAgentBrain: AgentBrain {
         try Task.checkCancellation()
       }
 
-      let detail = try await findings(prompt: prompt, context: context, progress: progress)
+      var detail = try await findings(
+        prompt: prompt, context: context, revising: nil, toClose: [], progress: progress)
+      var verdict = try await review(prompt: prompt, detail: detail, progress: progress)
+      var rounds = 1
+
+      // The task is done when the reviewer says the request is met. Without
+      // research there is nothing new to go and find, so one honest verdict
+      // is all we can offer.
+      if let research {
+        while !verdict.meetsRequest, rounds < Self.maxRounds {
+          try Task.checkCancellation()
+          await progress("Not there yet — \(Self.describe(verdict.gaps)). Round \(rounds + 1)…")
+
+          let more = await research.gather(
+            queries: verdict.followUpQueries, progress: progress)
+          guard !more.sources.isEmpty else {
+            await progress("Nothing new found for those gaps; stopping with them on the record.")
+            break
+          }
+          context = context.merging(more)
+
+          detail = try await findings(
+            prompt: prompt, context: context, revising: detail, toClose: verdict.gaps,
+            progress: progress)
+          verdict = try await review(prompt: prompt, detail: detail, progress: progress)
+          rounds += 1
+        }
+      }
+
+      await progress(
+        verdict.meetsRequest
+          ? "Request met after \(rounds) round\(rounds == 1 ? "" : "s")."
+          : "Finishing with \(verdict.gaps.count) gap\(verdict.gaps.count == 1 ? "" : "s") unresolved.")
 
       await progress("Writing the spoken summary…")
       let summarizer = LanguageModelSession(
@@ -245,7 +304,15 @@ struct MockAgentBrain: AgentBrain {
       return AgentBrainResult(
         summary: summary.trimmingCharacters(in: .whitespacesAndNewlines),
         detail: detail.trimmingCharacters(in: .whitespacesAndNewlines),
-        sources: context.sources)
+        sources: context.sources,
+        meetsRequest: verdict.meetsRequest,
+        gaps: verdict.gaps,
+        rounds: rounds)
+    }
+
+    private static func describe(_ gaps: [String]) -> String {
+      guard !gaps.isEmpty else { return "the findings don't cover the request yet" }
+      return gaps.prefix(2).joined(separator: "; ")
     }
 
     // MARK: Pass 1 — plan the searches
@@ -299,6 +366,9 @@ struct MockAgentBrain: AgentBrain {
       You write web search queries. You never answer the task yourself — \
       another system does that after reading what your queries find.
 
+      \(todayLine) Anchor anything seasonal or time-sensitive to that date. \
+      Never write a year you assumed.
+
       Write at most \(limit) queries. Each is 3–8 words of keywords, the kind \
       of thing someone types into a search box: no markdown, no punctuation, \
       no place names or figures you invented.
@@ -309,11 +379,116 @@ struct MockAgentBrain: AgentBrain {
       """
     }
 
+    // MARK: The bar — does this actually answer the request?
+
+    /// The reviewer's verdict on a draft. Guided generation because a
+    /// free-form critique is not something the loop can act on.
+    @Generable
+    struct CompletionVerdict {
+      @Guide(
+        description:
+          "True only when the findings fully deliver everything the request asked for, "
+          + "with every specific claim backed by a cited source. False if anything is "
+          + "missing, vague, uncited, guessed, or flagged unverified.")
+      var meetsRequest: Bool
+
+      @Guide(
+        description:
+          "Each thing the request asked for that the findings do not yet deliver, one "
+          + "short phrase each. Empty when meetsRequest is true.")
+      var gaps: [String]
+
+      @Guide(
+        description:
+          "Keyword web search queries, 3 to 8 words each, that would close those gaps. "
+          + "Empty when meetsRequest is true.")
+      var followUpQueries: [String]
+    }
+
+    /// Asks the model to mark its own work, held to a deliberately high bar.
+    /// A failed review is not an error — it is the signal to go round again.
+    private func review(
+      prompt: String,
+      detail: String,
+      progress: @Sendable (String) async -> Void
+    ) async throws -> CompletionVerdict {
+      try Task.checkCancellation()
+      await progress("Checking the findings against the request…")
+      let reviewer = LanguageModelSession(instructions: Self.reviewerInstructions)
+
+      do {
+        let verdict = try await reviewer.respond(
+          to: """
+            Request: \(prompt)
+
+            Draft findings:
+            \(WebResearcher.truncate(detail, to: 2500))
+            """,
+          generating: CompletionVerdict.self
+        ).content
+        return CompletionVerdict(
+          meetsRequest: verdict.meetsRequest,
+          gaps: verdict.meetsRequest ? [] : Self.tidy(verdict.gaps),
+          followUpQueries: WebResearcher.clean(verdict.followUpQueries, limit: 3))
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        // No verdict means no evidence the bar was cleared. Accepting the
+        // draft here would quietly turn every reviewer failure into a pass,
+        // which is exactly the bar this is meant to hold.
+        await progress("Couldn't review the findings; recording that the bar wasn't verified.")
+        return CompletionVerdict(
+          meetsRequest: false,
+          gaps: ["The findings could not be checked against the request on this device."],
+          followUpQueries: [])
+      }
+    }
+
+    private static func tidy(_ gaps: [String]) -> [String] {
+      var seen = Set<String>()
+      let cleaned = gaps
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+      return Array(cleaned.prefix(5))
+    }
+
+    private static var reviewerInstructions: String {
+      """
+      You review research findings against the request that prompted them. You \
+      do not rewrite them and you do not do the research yourself.
+
+      \(todayLine) Judge currency against that date, and anchor any query you \
+      write to it rather than to a year you assumed.
+
+      Hold a high bar. Say the request is met only when all of this is true:
+      - Every distinct thing the request asked for is delivered. Count them. A \
+        request for three ranked options with deadlines is not met by two \
+        options, nor by three without deadlines.
+      - Every specific claim — a price, a date, a name, a ranking — is backed \
+        by a cited source in the draft.
+      - Nothing important is left vague, guessed at, or flagged as unverified.
+      - Any constraint in the request (a budget, a location, an age, a \
+        timeframe) is actually honoured, not just acknowledged.
+
+      When it falls short, name each shortfall as a short phrase and write the \
+      keyword search queries that would close it. Be specific: "no registration \
+      deadlines for any camp", not "needs more detail".
+
+      A draft that reads well but leaves an ask unanswered does not meet the \
+      request.
+      """
+    }
+
     // MARK: Pass 2 — reason over what was read
 
+    /// `revising` carries the previous round's draft and `toClose` the gaps
+    /// the reviewer found in it, so a later round improves the draft instead
+    /// of starting over and losing what already worked.
     private func findings(
       prompt: String,
       context: ResearchContext,
+      revising previous: String?,
+      toClose gaps: [String],
       progress: @Sendable (String) async -> Void
     ) async throws -> String {
       guard !context.isEmpty else {
@@ -322,19 +497,19 @@ struct MockAgentBrain: AgentBrain {
         return try await session.respond(to: prompt).content
       }
 
-      await progress("Reasoning over \(context.sources.count) sources…")
+      await progress(
+        previous == nil
+          ? "Reasoning over \(context.sources.count) sources…"
+          : "Rewriting to close the gaps, now over \(context.sources.count) sources…")
       var lastError: Error?
       for budget in Self.excerptBudgets {
         do {
           try Task.checkCancellation()
-          let session = LanguageModelSession(instructions: Self.groundedInstructions)
+          let session = LanguageModelSession(
+            instructions: previous == nil ? Self.groundedInstructions : Self.revisionInstructions)
           return try await session.respond(
-            to: """
-              Task: \(prompt)
-
-              Sources:
-              \(context.promptBlock(charsPerSource: budget))
-              """
+            to: Self.findingsPrompt(
+              task: prompt, context: context, budget: budget, previous: previous, gaps: gaps)
           ).content
         } catch is CancellationError {
           throw CancellationError()
@@ -355,6 +530,42 @@ struct MockAgentBrain: AgentBrain {
         throw lastError ?? error
       }
     }
+
+    private static func findingsPrompt(
+      task: String, context: ResearchContext, budget: Int, previous: String?, gaps: [String]
+    ) -> String {
+      let sources = """
+        Task: \(task)
+
+        Sources:
+        \(context.promptBlock(charsPerSource: budget))
+        """
+      guard let previous else { return sources }
+      return """
+        \(sources)
+
+        Your previous draft:
+        \(WebResearcher.truncate(previous, to: 1800))
+
+        A reviewer found these gaps in it:
+        \(gaps.map { "- \($0)" }.joined(separator: "\n"))
+        """
+    }
+
+    private static let revisionInstructions = """
+      You are revising your own research findings. You are given the task, the \
+      sources (now including newly read pages), your previous draft, and the \
+      gaps a reviewer found in it.
+
+      Close every gap. Keep what already worked — do not drop correct, cited \
+      material to make room. Cite the new sources inline as [1], [2] the same \
+      way, using the numbers given in the source list. If a gap still cannot \
+      be closed from the sources available, say so explicitly rather than \
+      papering over it with a guess.
+
+      Format: a short ranked shortlist with the reasoning for each entry, then \
+      concrete next steps.
+      """
 
     private static let groundedInstructions = """
       You are a research agent. The user's task is followed by numbered \
